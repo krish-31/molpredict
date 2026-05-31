@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Data (raw + processed — too large for git)
+data/raw/
+data/processed/
+data/splits/
+*.csv.gz
+
+# Model checkpoints (too large — download from Kaggle)
+checkpoints/
+
+# Logs
+logs/
+wandb/
+*.log
+
+# Environment
+.env
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Frontend build
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/

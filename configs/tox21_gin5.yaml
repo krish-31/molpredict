@@ -1,0 +1,55 @@
+# Model Architecture
+gin_layers: 5
+hidden_dim: 300
+dropout: 0.5
+pooling: "sum"           # sum | mean | max
+edge_dim: 12             # bond feature dimension
+atom_dim: 85             # atom feature dimension
+
+# Training
+dataset: "tox21"
+split_strategy: "scaffold"
+train_frac: 0.8
+val_frac: 0.1
+test_frac: 0.1
+batch_size: 128
+max_epochs: 200
+learning_rate: 0.001
+weight_decay: 0.00001
+early_stopping_patience: 20
+grad_clip_norm: 1.0
+lr_scheduler: "cosine"   # cosine | step | none
+
+# Multi-Task Strategy
+use_pcgrad: true
+use_uncertainty_weighting: true
+num_tasks: 12
+
+# Tox21 task names (in order)
+task_names:
+  - "NR-AR"
+  - "NR-AR-LBD"
+  - "NR-AhR"
+  - "NR-Aromatase"
+  - "NR-ER"
+  - "NR-ER-LBD"
+  - "NR-PPAR-gamma"
+  - "SR-ARE"
+  - "SR-ATAD5"
+  - "SR-HSE"
+  - "SR-MMP"
+  - "SR-p53"
+
+# Logging (Weights & Biases)
+use_wandb: true
+wandb_project: "graphmol-tox21"
+wandb_entity: null          # set to your W&B username if needed
+log_interval: 5             # log every N epochs
+
+# Paths
+data_dir: "data"
+checkpoint_dir: "checkpoints/v1.0.0"
+log_dir: "logs"
+
+# Reproducibility
+seed: 42
