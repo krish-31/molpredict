@@ -63,7 +63,7 @@ export default function Results() {
             Technical Analysis & Benchmarking
           </h1>
           <p className="font-body-lg text-body-lg text-on-surface-variant max-w-3xl">
-            Comprehensive performance evaluation of GraphMol across 12 diverse molecular property prediction
+            Comprehensive performance evaluation of MolPredict across 12 diverse molecular property prediction
             tasks using multi-objective optimization strategies.
           </p>
         </section>

@@ -1,19 +1,19 @@
 import { useEffect, useRef } from 'react'
 
 // Colors per toxicity probability
-function barColor(prob) {
-  if (prob < 0.3) return 'bg-primary'
-  if (prob < 0.5) return 'bg-yellow-400'
-  return 'bg-red-500'
+function barColor(prob, threshold) {
+  if (prob >= threshold) return 'bg-red-500'
+  if (prob >= threshold * 0.6) return 'bg-yellow-400'
+  return 'bg-primary'
 }
 
-function textColor(prob) {
-  if (prob < 0.3) return 'text-primary'
-  if (prob < 0.5) return 'text-yellow-400'
-  return 'text-red-400'
+function textColor(prob, threshold) {
+  if (prob >= threshold) return 'text-red-400'
+  if (prob >= threshold * 0.6) return 'text-yellow-400'
+  return 'text-primary'
 }
 
-export default function PropertyBar({ name, probability, description, delay = 0 }) {
+export default function PropertyBar({ name, probability, description, threshold = 0.5, delay = 0 }) {
   const barRef = useRef(null)
 
   useEffect(() => {
@@ -25,9 +25,9 @@ export default function PropertyBar({ name, probability, description, delay = 0 
   }, [probability, delay])
 
   const pct = (probability * 100).toFixed(0)
-  const label = probability >= 0.5 ? 1 : 0
-  const col = barColor(probability)
-  const txtCol = textColor(probability)
+  const label = probability >= threshold ? 1 : 0
+  const col = barColor(probability, threshold)
+  const txtCol = textColor(probability, threshold)
 
   return (
     <div className="group flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-surface-container-high transition-colors duration-200">

@@ -1,20 +1,35 @@
 import { useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { apiClient } from '../api/client'
 
-const MOCK_RESULTS = [
-  { smiles: 'CC(=O)Oc1ccccc1C(=O)O', 'NR-AR': 0.12, 'NR-AhR': 0.45, 'SR-ARE': 0.52, 'SR-MMP': 0.11, 'SR-p53': 0.19 },
-  { smiles: 'Cn1cnc2c1c(=O)n(c(=O)n2C)C', 'NR-AR': 0.03, 'NR-AhR': 0.08, 'SR-ARE': 0.11, 'SR-MMP': 0.04, 'SR-p53': 0.06 },
-  { smiles: 'CC(=O)Nc1ccc(cc1)O', 'NR-AR': 0.07, 'NR-AhR': 0.15, 'SR-ARE': 0.23, 'SR-MMP': 0.09, 'SR-p53': 0.14 },
-  { smiles: 'CC(C)Cc1ccc(cc1)C(C)C(=O)O', 'NR-AR': 0.18, 'NR-AhR': 0.31, 'SR-ARE': 0.44, 'SR-MMP': 0.22, 'SR-p53': 0.28 },
-  { smiles: 'c1ccccc1', 'NR-AR': 0.05, 'NR-AhR': 0.62, 'SR-ARE': 0.28, 'SR-MMP': 0.08, 'SR-p53': 0.12 },
+const ALL_TASKS = [
+  { key: 'NR-AR', label: 'NR-AR', desc: 'Nuclear Receptor — Androgen Receptor' },
+  { key: 'NR-AR-LBD', label: 'NR-AR-LBD', desc: 'Androgen Receptor Ligand Binding Domain' },
+  { key: 'NR-AhR', label: 'NR-AhR', desc: 'Aryl Hydrocarbon Receptor' },
+  { key: 'NR-Aromatase', label: 'NR-Aromatase', desc: 'Aromatase Enzyme Inhibition' },
+  { key: 'NR-ER', label: 'NR-ER', desc: 'Estrogen Receptor Alpha' },
+  { key: 'NR-ER-LBD', label: 'NR-ER-LBD', desc: 'Estrogen Receptor Ligand Binding Domain' },
+  { key: 'NR-PPAR-gamma', label: 'NR-PPAR-γ', desc: 'Peroxisome Proliferator-Activated Receptor Gamma' },
+  { key: 'SR-ARE', label: 'SR-ARE', desc: 'Antioxidant Response Element' },
+  { key: 'SR-ATAD5', label: 'SR-ATAD5', desc: 'ATPase Family AAA Domain Containing 5' },
+  { key: 'SR-HSE', label: 'SR-HSE', desc: 'Heat Shock Element Pathway' },
+  { key: 'SR-MMP', label: 'SR-MMP', desc: 'Mitochondrial Membrane Potential' },
+  { key: 'SR-p53', label: 'SR-p53', desc: 'p53 Tumor Suppressor Pathway' }
 ]
 
-const SHOWN_TASKS = ['NR-AR', 'NR-AhR', 'SR-ARE', 'SR-MMP', 'SR-p53']
-
-function cellColor(v) {
-  if (v >= 0.5) return 'text-red-400'
-  if (v >= 0.3) return 'text-yellow-400'
+function cellColor(v, threshold = 0.20) {
+  if (v === undefined || v === null) return 'text-outline'
+  if (v >= threshold) return 'text-red-400 font-bold'
+  if (v >= threshold * 0.6) return 'text-yellow-400'
   return 'text-primary'
+}
+
+function getRiskBadge(risk) {
+  if (!risk) return <span className="px-2 py-0.5 rounded-full text-[10px] font-label-caps bg-outline/10 text-outline border border-outline/20">LOW</span>
+  const r = risk.toUpperCase()
+  if (r === 'HIGH') return <span className="px-2 py-0.5 rounded-full text-[10px] font-label-caps bg-red-500/10 text-red-400 border border-red-500/20">HIGH</span>
+  if (r === 'MODERATE') return <span className="px-2 py-0.5 rounded-full text-[10px] font-label-caps bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">MODERATE</span>
+  return <span className="px-2 py-0.5 rounded-full text-[10px] font-label-caps bg-primary/10 text-primary border border-primary/20">LOW</span>
 }
 
 export default function BatchUpload() {
@@ -24,7 +39,86 @@ export default function BatchUpload() {
   const [processing, setProcessing] = useState(false)
   const [done, setDone] = useState(false)
   const [results, setResults] = useState(null)
+  const [jobId, setJobId] = useState(null)
+  const [error, setError] = useState(null)
+  const [totalCount, setTotalCount] = useState(0)
+  const [threshold, setThreshold] = useState(0.20)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const fileInputRef = useRef()
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [riskFilter, setRiskFilter] = useState('ALL')
+  const [flaggedFilter, setFlaggedFilter] = useState('ALL')
+  const [sortConfig, setSortConfig] = useState({ key: 'compound_name', direction: 'asc' })
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  const handleSort = (key) => {
+    let direction = 'asc'
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc'
+    }
+    setSortConfig({ key, direction })
+    setCurrentPage(1)
+  }
+
+  // Filter and Search
+  const filteredResults = (results || []).filter(row => {
+    // 1. Search Query
+    const nameMatch = (row.compound_name || '').toLowerCase().includes(searchQuery.toLowerCase())
+    const smilesMatch = (row.smiles || '').toLowerCase().includes(searchQuery.toLowerCase())
+    if (!nameMatch && !smilesMatch) return false
+
+    // 2. Risk Filter
+    if (riskFilter !== 'ALL') {
+      if ((row.risk_level || 'LOW').toUpperCase() !== riskFilter) return false
+    }
+
+    // 3. Flagged Filter
+    if (flaggedFilter !== 'ALL') {
+      const flagged = parseInt(row.flagged_endpoints || 0, 10)
+      if (flaggedFilter === 'SAFE' && flagged > 0) return false
+      if (flaggedFilter === 'TOXIC' && flagged === 0) return false
+      if (flaggedFilter === 'GE1' && flagged < 1) return false
+      if (flaggedFilter === 'GE3' && flagged < 3) return false
+    }
+
+    return true
+  })
+
+  // Sorting
+  const sortedResults = [...filteredResults].sort((a, b) => {
+    let aVal = a[sortConfig.key]
+    let bVal = b[sortConfig.key]
+
+    // Special cases
+    if (sortConfig.key === 'compound_name') {
+      aVal = aVal || 'Unknown Compound'
+      bVal = bVal || 'Unknown Compound'
+      return sortConfig.direction === 'asc' 
+        ? aVal.localeCompare(bVal) 
+        : bVal.localeCompare(aVal)
+    }
+    
+    if (sortConfig.key === 'risk_level') {
+      const riskOrder = { 'LOW': 0, 'MODERATE': 1, 'HIGH': 2 }
+      const aOrder = riskOrder[(a.risk_level || 'LOW').toUpperCase()] ?? 0
+      const bOrder = riskOrder[(b.risk_level || 'LOW').toUpperCase()] ?? 0
+      return sortConfig.direction === 'asc' ? aOrder - bOrder : bOrder - aOrder
+    }
+
+    // Default numeric sort
+    aVal = parseFloat(aVal) || 0
+    bVal = parseFloat(bVal) || 0
+    return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal
+  })
+
+  // Pagination
+  const totalPages = Math.ceil(sortedResults.length / pageSize)
+  const paginatedResults = sortedResults.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
 
   function handleFile(f) {
     if (!f) return
@@ -33,22 +127,55 @@ export default function BatchUpload() {
     setResults(null)
     setProgress(0)
     setProcessing(true)
+    setError(null)
 
-    // Simulate progressive processing
-    let p = 0
-    const interval = setInterval(() => {
-      p += Math.random() * 18 + 5
-      if (p >= 100) {
-        p = 100
-        clearInterval(interval)
-        setTimeout(() => {
-          setProcessing(false)
-          setDone(true)
-          setResults(MOCK_RESULTS)
-        }, 400)
-      }
-      setProgress(Math.min(p, 100))
-    }, 300)
+    apiClient.createBatchJob(f, threshold)
+      .then(jobData => {
+        const activeId = jobData.job_id
+        setJobId(activeId)
+        
+        // Start polling
+        const interval = setInterval(() => {
+          apiClient.getBatchJobStatus(activeId)
+            .then(statusData => {
+              setProgress(statusData.progress_pct)
+              if (statusData.total_molecules) {
+                setTotalCount(statusData.total_molecules)
+              }
+              
+              if (statusData.status === 'completed') {
+                clearInterval(interval)
+                // Fetch preview
+                apiClient.getBatchJobPreview(activeId)
+                  .then(preview => {
+                    setResults(preview)
+                    setProcessing(false)
+                    setDone(true)
+                  })
+                  .catch(err => {
+                    console.error("Preview error: ", err)
+                    setError("Failed to fetch results preview.")
+                    setProcessing(false)
+                  })
+              } else if (statusData.status === 'failed') {
+                clearInterval(interval)
+                setError("Batch prediction failed on the server.")
+                setProcessing(false)
+              }
+            })
+            .catch(err => {
+              clearInterval(interval)
+              console.error(err)
+              setError("Error checking job status.")
+              setProcessing(false)
+            })
+        }, 1500)
+      })
+      .catch(err => {
+        console.error(err)
+        setError("Failed to create batch prediction job. Make sure the backend is online.")
+        setProcessing(false)
+      })
   }
 
   function handleDrop(e) {
@@ -67,15 +194,10 @@ export default function BatchUpload() {
   }
 
   function downloadResults() {
-    if (!results) return
-    const header = ['smiles', ...SHOWN_TASKS, '...+7']
-    const rows = results.map(r => [r.smiles, ...SHOWN_TASKS.map(t => r[t].toFixed(4)), ''])
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = 'batch_results.csv'; a.click()
+    if (!jobId) return
+    window.open(apiClient.getBatchJobDownloadUrl(jobId), '_blank')
   }
+
 
   return (
     <div className="pt-24 pb-16 min-h-screen">
@@ -136,6 +258,43 @@ export default function BatchUpload() {
               )}
             </div>
 
+            {/* Advanced options */}
+            <div className="bg-surface-container border border-outline-variant rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="w-full px-6 py-4 flex items-center justify-between text-on-surface-variant hover:text-on-surface transition-colors"
+              >
+                <span className="font-label-caps text-label-caps">ADVANCED OPTIONS</span>
+                <span className="material-symbols-outlined transition-transform duration-200" style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0)' }}>
+                  expand_more
+                </span>
+              </button>
+              {showAdvanced && (
+                <div className="px-6 pb-6 animate-slide-up">
+                  <div className="mb-4">
+                    <label className="font-label-caps text-label-caps text-on-surface-variant block mb-2">
+                      CLASSIFICATION THRESHOLD: {threshold.toFixed(2)}
+                    </label>
+                    <input
+                      type="range" min="0.1" max="0.9" step="0.05"
+                      value={threshold}
+                      onChange={e => setThreshold(parseFloat(e.target.value))}
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between font-code-sm text-code-sm text-outline mt-1">
+                      <span>0.1</span><span>0.5</span><span>0.9</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-xs font-code-sm text-center">
+                {error}
+              </div>
+            )}
+
             {/* Template download */}
             <button
               onClick={downloadTemplate}
@@ -187,7 +346,7 @@ export default function BatchUpload() {
                   <div>
                     <div className="font-label-caps text-label-caps text-on-surface">{file.name}</div>
                     <div className="font-code-sm text-code-sm text-outline mt-1">
-                      {done ? `${MOCK_RESULTS.length} molecules · Completed` : `Processing… ${Math.round(progress)}%`}
+                      {done ? `${totalCount} molecules · Completed` : `Processing… ${Math.round(progress)}%`}
                     </div>
                   </div>
                   {done && (
@@ -216,54 +375,256 @@ export default function BatchUpload() {
 
             {/* Preview table */}
             {results && (
-              <div className="bg-surface-container border border-outline-variant rounded-xl p-6 animate-fade-in">
-                <div className="flex items-center justify-between mb-4">
+              <div className="bg-surface-container border border-outline-variant rounded-xl p-6 animate-fade-in flex flex-col">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                   <div>
-                    <div className="font-label-caps text-label-caps text-on-surface-variant">RESULTS PREVIEW</div>
-                    <div className="font-code-sm text-code-sm text-outline mt-1">First {results.length} molecules · 12 tasks each</div>
+                    <div className="font-label-caps text-label-caps text-on-surface-variant">SCREENING DASHBOARD</div>
+                    <div className="font-code-sm text-code-sm text-outline mt-1">
+                      Showing {filteredResults.length} of {results.length} molecules · 12 toxicity endpoints
+                    </div>
                   </div>
                   <button
                     onClick={downloadResults}
-                    className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg font-label-caps text-label-caps hover:opacity-90 transition-all duration-200 active:scale-95"
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg font-label-caps text-label-caps hover:opacity-90 transition-all duration-200 active:scale-95 whitespace-nowrap self-end md:self-auto"
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>download</span>
                     Download CSV
                   </button>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[600px]">
+                {/* Dashboard Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-surface-container-low p-4 rounded-xl border border-outline-variant/40">
+                  {/* Search */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-caps text-label-caps text-outline text-[10px]">Search Compound</label>
+                    <div className="flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-high px-3 py-2 text-xs">
+                      <span className="material-symbols-outlined text-outline text-base">search</span>
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1) }}
+                        placeholder="Name or SMILES..."
+                        className="bg-transparent text-on-surface focus:outline-none w-full font-code-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Risk Level */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-caps text-label-caps text-outline text-[10px]">Risk level</label>
+                    <select
+                      value={riskFilter}
+                      onChange={e => { setRiskFilter(e.target.value); setCurrentPage(1) }}
+                      className="rounded-lg border border-outline-variant bg-surface-container-high px-3 py-2.5 text-xs text-on-surface focus:outline-none accent-primary cursor-pointer"
+                    >
+                      <option value="ALL">All Risk Levels</option>
+                      <option value="LOW">Low Risk</option>
+                      <option value="MODERATE">Moderate Risk</option>
+                      <option value="HIGH">High Risk</option>
+                    </select>
+                  </div>
+
+                  {/* Toxicity Status */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-caps text-label-caps text-outline text-[10px]">Toxicity status</label>
+                    <select
+                      value={flaggedFilter}
+                      onChange={e => { setFlaggedFilter(e.target.value); setCurrentPage(1) }}
+                      className="rounded-lg border border-outline-variant bg-surface-container-high px-3 py-2.5 text-xs text-on-surface focus:outline-none accent-primary cursor-pointer"
+                    >
+                      <option value="ALL">All Compounds</option>
+                      <option value="SAFE">Safe Only (0 flagged)</option>
+                      <option value="TOXIC">{"Flagged Only (>= 1 flagged)"}</option>
+                      <option value="GE1">{">= 1 Flagged"}</option>
+                      <option value="GE3">{">= 3 Flagged (High Toxin)"}</option>
+                    </select>
+                  </div>
+
+                  {/* Page Size */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-caps text-label-caps text-outline text-[10px]">Molecules per page</label>
+                    <select
+                      value={pageSize}
+                      onChange={e => { setPageSize(parseInt(e.target.value)); setCurrentPage(1) }}
+                      className="rounded-lg border border-outline-variant bg-surface-container-high px-3 py-2.5 text-xs text-on-surface focus:outline-none accent-primary cursor-pointer"
+                    >
+                      <option value="10">10 rows</option>
+                      <option value="25">25 rows</option>
+                      <option value="50">50 rows</option>
+                      <option value="100">100 rows</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Table Container with Sticky Headers and Frozen Columns */}
+                <div className="overflow-x-auto relative rounded-lg border border-outline-variant/60 max-h-[600px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-outline-variant">
-                        <th className="text-left py-3 px-3 font-label-caps text-label-caps text-on-surface-variant">SMILES</th>
-                        {SHOWN_TASKS.map(t => (
-                          <th key={t} className="text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant whitespace-nowrap">{t}</th>
+                      <tr className="border-b border-outline-variant bg-surface-container-high">
+                        <th 
+                          onClick={() => handleSort('compound_name')}
+                          className="sticky left-0 top-0 z-30 bg-surface-container-high border-b border-outline-variant text-left py-3 px-3 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer min-w-[160px] shadow-[3px_0_6px_-3px_rgba(0,0,0,0.4)]"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>Compound Name</span>
+                            {sortConfig.key === 'compound_name' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleSort('smiles')}
+                          className="sticky left-[160px] top-0 z-30 bg-surface-container-high border-b border-outline-variant text-left py-3 px-3 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer min-w-[180px] shadow-[3px_0_6px_-3px_rgba(0,0,0,0.4)]"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>SMILES</span>
+                            {sortConfig.key === 'smiles' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleSort('formula')}
+                          className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer whitespace-nowrap min-w-[100px]"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Formula</span>
+                            {sortConfig.key === 'formula' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleSort('molecular_weight')}
+                          className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer whitespace-nowrap min-w-[100px]"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Mol. Wt</span>
+                            {sortConfig.key === 'molecular_weight' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleSort('flagged_endpoints')}
+                          className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer whitespace-nowrap min-w-[90px]"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Flagged</span>
+                            {sortConfig.key === 'flagged_endpoints' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleSort('risk_level')}
+                          className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer whitespace-nowrap min-w-[110px]"
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <span>Risk Level</span>
+                            {sortConfig.key === 'risk_level' && (
+                              <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                            )}
+                          </div>
+                        </th>
+                        {ALL_TASKS.map(t => (
+                          <th 
+                            key={t.key} 
+                            onClick={() => handleSort(t.key)}
+                            className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-center py-3 px-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors cursor-pointer whitespace-nowrap group min-w-[90px]"
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>{t.label}</span>
+                              {sortConfig.key === t.key && (
+                                <span className="material-symbols-outlined text-[12px]">{sortConfig.direction === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                              )}
+                            </div>
+                            
+                            {/* Hover Tooltip */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-surface-container-highest border border-outline-variant rounded-lg p-2.5 w-48 shadow-xl z-50 text-[10px] font-normal normal-case text-on-surface whitespace-normal leading-relaxed text-center">
+                              {t.desc}
+                            </div>
+                          </th>
                         ))}
-                        <th className="text-center py-3 px-2 font-label-caps text-label-caps text-outline">+7</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {results.map((row, i) => (
-                        <tr key={i} className="border-b border-outline-variant/40 hover:bg-surface-container-high transition-colors">
-                          <td className="py-3 px-3 font-code-sm text-code-sm text-on-surface-variant max-w-[180px] truncate">
+                      {paginatedResults.map((row, i) => (
+                        <tr key={i} className="border-b border-outline-variant/40 hover:bg-surface-container-high transition-colors group">
+                          {/* Frozen Compound Name */}
+                          <td className="sticky left-0 z-10 bg-surface-container group-hover:bg-surface-container-high py-3 px-3 font-code-sm text-code-sm text-primary font-semibold truncate max-w-[160px] shadow-[3px_0_6px_-3px_rgba(0,0,0,0.4)] transition-colors">
+                            {row.compound_name || 'Unknown Compound'}
+                          </td>
+                          {/* Frozen SMILES */}
+                          <td className="sticky left-[160px] z-10 bg-surface-container group-hover:bg-surface-container-high py-3 px-3 font-code-sm text-code-sm text-on-surface-variant truncate max-w-[180px] shadow-[3px_0_6px_-3px_rgba(0,0,0,0.4)] transition-colors" title={row.smiles}>
                             {row.smiles}
                           </td>
-                          {SHOWN_TASKS.map(t => (
-                            <td key={t} className="py-3 px-2 text-center">
-                              <span className={`font-metric-display ${cellColor(row[t])}`} style={{ fontSize: '13px' }}>
-                                {(row[t] * 100).toFixed(0)}%
+                          
+                          <td className="py-3 px-2 text-center font-code-sm text-code-sm text-on-surface-variant">
+                            {row.formula || '—'}
+                          </td>
+                          <td className="py-3 px-2 text-center font-metric-display text-on-surface-variant" style={{ fontSize: '13px' }}>
+                            {row.molecular_weight ? `${row.molecular_weight} Da` : '—'}
+                          </td>
+                          <td className="py-3 px-2 text-center">
+                            <span className={`px-2 py-0.5 rounded font-metric-display ${row.flagged_endpoints > 0 ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-primary/10 text-primary border border-primary/20'}`} style={{ fontSize: '12px' }}>
+                              {row.flagged_endpoints || 0}
+                            </span>
+                          </td>
+                          <td className="py-3 px-2 text-center">
+                            {getRiskBadge(row.risk_level)}
+                          </td>
+
+                          {ALL_TASKS.map(t => (
+                            <td key={t.key} className="py-3 px-2 text-center">
+                              <span className={`font-metric-display ${cellColor(row[t.key], threshold)}`} style={{ fontSize: '13px' }}>
+                                {row[t.key] !== undefined && row[t.key] !== null ? `${(row[t.key] * 100).toFixed(0)}%` : '—'}
                               </span>
-                              {row[t] >= 0.5 && (
-                                <span className="ml-1 text-red-400 material-symbols-outlined" style={{ fontSize: '12px' }}>warning</span>
+                              {row[t.key] >= threshold && (
+                                <span className="ml-1 text-red-400 material-symbols-outlined align-middle" style={{ fontSize: '12px' }}>warning</span>
                               )}
                             </td>
                           ))}
-                          <td className="py-3 px-2 text-center font-label-caps text-label-caps text-outline">…</td>
                         </tr>
                       ))}
+                      {paginatedResults.length === 0 && (
+                        <tr>
+                          <td colSpan={6 + ALL_TASKS.length} className="py-10 text-center font-body-md text-body-md text-outline">
+                            No compounds match the current filter criteria.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-4 border-t border-outline-variant">
+                    <div className="text-xs text-outline font-label-caps">
+                      Showing {Math.min(filteredResults.length, (currentPage - 1) * pageSize + 1)} to {Math.min(filteredResults.length, currentPage * pageSize)} of {filteredResults.length} matching compounds
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-1.5 rounded-lg border border-outline-variant text-[11px] font-label-caps text-on-surface-variant hover:text-primary hover:border-primary disabled:opacity-30 disabled:pointer-events-none transition-colors duration-200"
+                      >
+                        Previous
+                      </button>
+                      <div className="text-xs font-metric-display text-on-surface">
+                        Page {currentPage} of {totalPages}
+                      </div>
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-1.5 rounded-lg border border-outline-variant text-[11px] font-label-caps text-on-surface-variant hover:text-primary hover:border-primary disabled:opacity-30 disabled:pointer-events-none transition-colors duration-200"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

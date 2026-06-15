@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import PropertyBar from '../components/PropertyBar'
 import MoleculeViewer from '../components/MoleculeViewer'
+import { apiClient } from '../api/client'
 
 const TASK_INFO = [
   { key: 'NR-AR',        name: 'NR-AR',         desc: 'Nuclear Receptor — Androgen Receptor' },
@@ -17,13 +18,6 @@ const TASK_INFO = [
   { key: 'SR-MMP',     name: 'SR-MMP',          desc: 'Mitochondrial Membrane Potential' },
   { key: 'SR-p53',     name: 'SR-p53',          desc: 'p53 Tumor Suppressor Pathway' },
 ]
-
-// Mock prediction function — in production, calls POST /predict
-function mockPredict(smiles) {
-  const seed = smiles.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
-  const rand = (i) => ((seed * (i + 1) * 2654435761) >>> 0) / 4294967296
-  return Object.fromEntries(TASK_INFO.map((t, i) => [t.key, Math.min(0.95, Math.max(0.02, rand(i)))]))
-}
 
 function isValidSmiles(s) {
   return s.length > 2 && /^[A-Za-z0-9@+\-\[\]()=#$/\\.%]+$/.test(s)
@@ -42,8 +36,12 @@ export default function Predict() {
   const [draftSmiles, setDraftSmiles] = useState(searchParams.get('smiles') || '')
   const [predictions, setPredictions] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [threshold, setThreshold] = useState(0.5)
+  const [threshold, setThreshold] = useState(0.20)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [apiMolProps, setApiMolProps] = useState(null)
+  const [svgContent, setSvgContent] = useState(null)
+  const [error, setError] = useState(null)
+  const [copied, setCopied] = useState(false)
 
   const valid = isValidSmiles(draftSmiles)
 
@@ -55,13 +53,51 @@ export default function Predict() {
     if (!isValidSmiles(s)) return
     setLoading(true)
     setPredictions(null)
-    setTimeout(() => {
-      setPredictions(mockPredict(s))
-      setLoading(false)
-    }, 900)
+    setSvgContent(null)
+    setError(null)
+    
+    apiClient.predictSingle(s, threshold)
+      .then(data => {
+        if (data.is_valid) {
+          setSvgContent(data.svg_structure || null)
+          const flatPreds = {}
+          for (const [task, info] of Object.entries(data.predictions)) {
+            const key = task === 'NR-PPAR-gamma' ? 'NR-PPAR-γ' : task
+            flatPreds[key] = info.probability
+          }
+          setPredictions(flatPreds)
+          
+          if (data.molecular_properties) {
+            const props = data.molecular_properties
+            const name = data.compound_name || 'Unknown Compound'
+            
+            setApiMolProps({
+              name,
+              pubchemCid: data.pubchem_cid || null,
+              confidence: data.name_confidence || 'low',
+              synonyms: data.synonyms || [],
+              formula: props.molecular_formula,
+              mw: `${props.molecular_weight} Da`,
+              hbd: props.hbd,
+              hba: props.hba,
+              logp: props.logp,
+            })
+          } else {
+            setApiMolProps(null)
+          }
+        } else {
+          setError("Failed to parse molecule SMILES. The structure is invalid.")
+        }
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error(err)
+        setError("Network error or backend is offline. Failed to predict.")
+        setLoading(false)
+      })
   }
 
-  const molProps = MOL_PROPS[smiles] || null
+  const molProps = apiMolProps || MOL_PROPS[smiles] || null
   const toxicCount = predictions ? Object.values(predictions).filter(v => v >= threshold).length : 0
 
   function downloadCSV() {
@@ -134,6 +170,12 @@ export default function Predict() {
                 )}
               </button>
 
+              {error && (
+                <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-xs font-code-sm text-center">
+                  {error}
+                </div>
+              )}
+
               {/* Quick picks */}
               <div className="mt-4 flex flex-wrap gap-2">
                 {[
@@ -155,14 +197,96 @@ export default function Predict() {
             {/* Molecule viewer */}
             <div className="bg-surface-container border border-outline-variant rounded-xl p-6">
               <label className="font-label-caps text-label-caps text-on-surface-variant block mb-3">2D STRUCTURE</label>
-              <MoleculeViewer smiles={smiles} isValid={!!smiles && isValidSmiles(smiles)} />
+              <MoleculeViewer smiles={smiles} svgContent={svgContent} isValid={!!smiles && isValidSmiles(smiles)} />
             </div>
+
+            {/* Molecular properties */}
+            {/* Compound Name Card */}
+            {molProps && (
+              <div className="bg-surface-container border border-outline-variant rounded-xl p-6 animate-fade-in flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <label className="font-label-caps text-label-caps text-on-surface-variant">COMPOUND NAME</label>
+                  
+                  {/* Confidence Badge */}
+                  {molProps.confidence && (
+                    <span 
+                      className={`font-label-caps text-[10px] px-2 py-0.5 rounded-full border ${
+                        molProps.confidence === 'high' 
+                          ? 'bg-primary/10 text-primary border-primary/20' 
+                          : molProps.confidence === 'medium' 
+                          ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                          : 'bg-outline/10 text-outline border-outline/20'
+                      }`}
+                      title={`Name resolution source confidence: ${molProps.confidence}`}
+                    >
+                      {molProps.confidence.toUpperCase()} CONFIDENCE
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-start justify-between gap-4">
+                  {/* Compound Name with overflow protection */}
+                  <div className="font-headline-md text-primary break-all md:break-words flex-1">
+                    {molProps.name}
+                  </div>
+
+                  {/* Copy Button */}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(molProps.name);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="p-1.5 rounded border border-outline-variant hover:border-primary hover:text-primary text-on-surface-variant transition-colors"
+                    title="Copy compound name to clipboard"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                      {copied ? 'check' : 'content_copy'}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Additional Info: PubChem CID & Synonyms */}
+                {(molProps.pubchemCid || (molProps.synonyms && molProps.synonyms.length > 0)) && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1 pt-3 border-t border-outline-variant/40 text-xs text-on-surface-variant">
+                    {molProps.pubchemCid && (
+                      <a
+                        href={`https://pubchem.ncbi.nlm.nih.gov/compound/${molProps.pubchemCid}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 hover:text-primary transition-colors text-primary-container"
+                        title="View compound on PubChem website"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
+                        <span>PubChem CID: {molProps.pubchemCid}</span>
+                      </a>
+                    )}
+                    
+                    {molProps.synonyms && molProps.synonyms.length > 0 && (
+                      <div className="relative group flex items-center gap-1 cursor-help hover:text-on-surface transition-colors">
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>info</span>
+                        <span>Synonyms</span>
+                        
+                        {/* Custom Pure CSS Tooltip */}
+                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-surface-container-highest border border-outline-variant rounded-lg p-3 w-64 shadow-xl z-50 animate-fade-in text-xs font-normal text-on-surface leading-relaxed">
+                          <div className="font-semibold text-primary mb-1">Synonyms</div>
+                          <ul className="list-disc list-inside space-y-1">
+                            {molProps.synonyms.map((syn, idx) => (
+                              <li key={idx} className="truncate" title={syn}>{syn}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Molecular properties */}
             {molProps && (
               <div className="bg-surface-container border border-outline-variant rounded-xl p-6 animate-fade-in">
                 <label className="font-label-caps text-label-caps text-on-surface-variant block mb-3">MOLECULAR PROPERTIES</label>
-                <div className="font-label-caps text-label-caps text-primary mb-3">{molProps.name}</div>
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     ['Formula', molProps.formula],
@@ -275,6 +399,7 @@ export default function Predict() {
                           name={name}
                           probability={predictions[key]}
                           description={desc}
+                          threshold={threshold}
                           delay={idx * 60}
                         />
                       </div>

@@ -20,7 +20,7 @@ export default function TopNavBar() {
         onClick={() => navigate('/')}
         className="font-headline-md text-headline-md font-bold text-on-surface hover:text-primary transition-colors duration-200"
       >
-        GraphMol
+        MolPredict
       </button>
 
       {/* Desktop nav */}
@@ -41,14 +41,7 @@ export default function TopNavBar() {
             {label}
           </NavLink>
         ))}
-        <a
-          href="https://github.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-4 px-4 py-2 bg-primary text-on-primary rounded font-label-caps text-label-caps hover:opacity-90 transition-all duration-200 active:scale-95"
-        >
-          GitHub
-        </a>
+
       </nav>
 
       {/* Mobile hamburger */}
@@ -78,14 +71,7 @@ export default function TopNavBar() {
               {label}
             </NavLink>
           ))}
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-4 py-2 bg-primary text-on-primary rounded font-label-caps text-label-caps text-center"
-          >
-            GitHub
-          </a>
+
         </div>
       )}
     </header>

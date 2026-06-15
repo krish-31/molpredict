@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiClient } from '../api/client'
 
 const POOLING = ['sum', 'mean', 'max']
 const DATASETS = ['tox21', 'bace', 'bbbp', 'hiv', 'esol', 'lipophilicity']
@@ -29,14 +30,23 @@ export default function TrainConfig() {
   })
   const [saved, setSaved] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [error, setError] = useState(null)
 
   const set = (k, v) => setConfig(c => ({ ...c, [k]: v }))
 
   function startTraining() {
     setStarting(true)
-    setTimeout(() => {
-      navigate('/train/monitor', { state: { config } })
-    }, 600)
+    setError(null)
+    apiClient.startTraining(config)
+      .then(data => {
+        setStarting(false)
+        navigate('/train/monitor', { state: { config, runId: data.run_id } })
+      })
+      .catch(err => {
+        console.error(err)
+        setError("Failed to start training run on the backend. Make sure the server is online.")
+        setStarting(false)
+      })
   }
 
   function saveConfig() {
@@ -291,6 +301,12 @@ export default function TrainConfig() {
                   )}
                 </div>
               </div>
+
+              {error && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-xs font-code-sm text-center">
+                  {error}
+                </div>
+              )}
 
               {/* Action buttons */}
               <button

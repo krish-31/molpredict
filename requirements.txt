@@ -1,8 +1,8 @@
 # Core ML
 torch>=2.1.0
 torch-geometric>=2.4.0
-torch-scatter>=2.1.2
-torch-sparse>=0.6.18
+#torch-scatter>=2.1.2
+#torch-sparse>=0.6.18
 
 # Chemistry
 rdkit>=2023.9.1

@@ -52,3 +52,13 @@ frontend/.env
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Database and Model files
+*.db
+*.sqlite
+*.sqlite3
+*.pt
+*.pth
+
+# Uploads
+storage/uploads/

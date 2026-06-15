@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, Link } from 'react-router-dom'
+import { apiClient } from '../api/client'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   BarChart, Bar, Cell,
@@ -46,8 +47,11 @@ const CHART_TOOLTIP_STYLE = {
 
 export default function TrainMonitor() {
   const location = useLocation()
-  const config = location.state?.config || { runName: 'demo_run', maxEpochs: 200 }
+  const initialConfig = location.state?.config || { runName: 'demo_run', maxEpochs: 200 }
+  const initialRunId = location.state?.runId || null
 
+  const [config, setConfig] = useState(initialConfig)
+  const [runId, setRunId] = useState(initialRunId)
   const [epoch, setEpoch] = useState(0)
   const [running, setRunning] = useState(true)
   const [metrics, setMetrics] = useState([])
@@ -55,29 +59,184 @@ export default function TrainMonitor() {
   const [uncertainty, setUncertainty] = useState({})
   const [bestAUC, setBestAUC] = useState(0)
   const [bestEpoch, setBestEpoch] = useState(0)
+  const [isRealRun, setIsRealRun] = useState(!!initialRunId)
   const intervalRef = useRef(null)
 
+  // 1. Try to find the latest run from DB if we visited page directly
+  useEffect(() => {
+    if (!runId) {
+      apiClient.getTrainingRuns()
+        .then(runs => {
+          if (runs.length > 0) {
+            const latest = runs[0]
+            setRunId(latest.run_id)
+            setIsRealRun(true)
+            setConfig({
+              runName: latest.run_name,
+              maxEpochs: latest.total_epochs || 200
+            })
+            setRunning(latest.status === 'running')
+          } else {
+            // No runs found, use simulation fallback
+            setIsRealRun(false)
+          }
+        })
+        .catch(err => {
+          console.error(err)
+          setIsRealRun(false)
+        })
+    }
+  }, [runId])
+
+  // 2. Fetch initial history for real run
+  useEffect(() => {
+    if (!isRealRun || !runId) return
+
+    apiClient.getTrainingMetrics(runId)
+      .then(historyData => {
+        if (historyData.length === 0) return
+
+        const formatted = historyData.map(m => ({
+          epoch: m.epoch,
+          trainLoss: m.train_loss,
+          valLoss: m.val_loss,
+          avgAUC: m.avg_val_auc,
+          conflictRate: m.conflict_rate
+        }))
+        setMetrics(formatted)
+
+        let best = 0
+        let bestEp = 0
+        formatted.forEach(item => {
+          if (item.avgAUC > best) {
+            best = item.avgAUC
+            bestEp = item.epoch
+          }
+        })
+        setBestAUC(best)
+        setBestEpoch(bestEp)
+
+        const last = historyData[historyData.length - 1]
+        setEpoch(last.epoch)
+        
+        const mappedAUC = {}
+        for (const [k, v] of Object.entries(last.per_task_auc)) {
+          const key = k === 'NR-PPAR-gamma' ? 'NR-PPAR-γ' : k
+          mappedAUC[key] = v
+        }
+        setTaskAUC(mappedAUC)
+
+        const mappedUnc = {}
+        for (const [k, v] of Object.entries(last.uncertainty_weights)) {
+          const key = k === 'NR-PPAR-gamma' ? 'NR-PPAR-γ' : k
+          mappedUnc[key] = v
+        }
+        setUncertainty(mappedUnc)
+      })
+      .catch(err => console.error("Error loading metrics: ", err))
+  }, [isRealRun, runId])
+
+  // 3. Polling loop for active training
   useEffect(() => {
     if (!running) return
-    intervalRef.current = setInterval(() => {
-      setEpoch(prev => {
-        const next = prev + 1
-        const data = generateEpochData(next)
-        setMetrics(m => [...m.slice(-60), data])
-        const auc = generateTaskAUC(next)
-        setTaskAUC(auc)
-        setUncertainty(generateUncertainty(next))
-        const avg = data.avgAUC
-        setBestAUC(b => { if (avg > b) { setBestEpoch(next); return avg } return b })
-        if (next >= config.maxEpochs) {
-          clearInterval(intervalRef.current)
-          setRunning(false)
-        }
-        return next
-      })
-    }, 300)
+
+    if (!isRealRun) {
+      // Local simulation loop
+      intervalRef.current = setInterval(() => {
+        setEpoch(prev => {
+          const next = prev + 1
+          const data = generateEpochData(next)
+          setMetrics(m => [...m.slice(-60), data])
+          
+          const auc = generateTaskAUC(next)
+          setTaskAUC(auc)
+          setUncertainty(generateUncertainty(next))
+          
+          const avg = data.avgAUC
+          setBestAUC(b => {
+            if (avg > b) {
+              setBestEpoch(next)
+              return avg
+            }
+            return b
+          })
+          
+          if (next >= config.maxEpochs) {
+            clearInterval(intervalRef.current)
+            setRunning(false)
+          }
+          return next
+        })
+      }, 500)
+    } else {
+      // Real backend polling loop
+      intervalRef.current = setInterval(() => {
+        apiClient.getTrainingRun(runId)
+          .then(statusData => {
+            if (statusData.status !== 'running') {
+              setRunning(false)
+              clearInterval(intervalRef.current)
+            }
+
+            if (statusData.latest_metrics) {
+              const m = statusData.latest_metrics
+              
+              setMetrics(prev => {
+                if (prev.some(item => item.epoch === m.epoch)) return prev
+                const newMetric = {
+                  epoch: m.epoch,
+                  trainLoss: m.train_loss,
+                  valLoss: m.val_loss,
+                  avgAUC: m.avg_val_auc,
+                  conflictRate: m.conflict_rate
+                }
+                return [...prev.slice(-60), newMetric]
+              })
+
+              setEpoch(m.epoch)
+
+              const mappedAUC = {}
+              for (const [k, v] of Object.entries(m.per_task_auc)) {
+                const key = k === 'NR-PPAR-gamma' ? 'NR-PPAR-γ' : k
+                mappedAUC[key] = v
+              }
+              setTaskAUC(mappedAUC)
+
+              const mappedUnc = {}
+              for (const [k, v] of Object.entries(m.uncertainty_weights)) {
+                const key = k === 'NR-PPAR-gamma' ? 'NR-PPAR-γ' : k
+                mappedUnc[key] = v
+              }
+              setUncertainty(mappedUnc)
+
+              if (m.avg_val_auc > bestAUC) {
+                setBestAUC(m.avg_val_auc)
+                setBestEpoch(m.epoch)
+              }
+            }
+          })
+          .catch(err => {
+            console.error("Polling error: ", err)
+          })
+      }, 1500)
+    }
+
     return () => clearInterval(intervalRef.current)
-  }, [running, config.maxEpochs])
+  }, [running, isRealRun, runId, bestAUC, config.maxEpochs])
+
+  const handleStopToggle = () => {
+    if (running) {
+      if (isRealRun && runId) {
+        apiClient.stopTrainingRun(runId)
+          .then(() => setRunning(false))
+          .catch(err => console.error("Stop run error: ", err))
+      } else {
+        setRunning(false)
+      }
+    } else {
+      setRunning(true)
+    }
+  }
 
   const lastMetric = metrics[metrics.length - 1] || {}
   const progress = Math.round((epoch / config.maxEpochs) * 100)
@@ -99,7 +258,7 @@ export default function TrainMonitor() {
               {running ? 'RUNNING' : 'COMPLETED'}
             </span>
             <button
-              onClick={() => { setRunning(r => { if (r) clearInterval(intervalRef.current); return !r }) }}
+              onClick={handleStopToggle}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg border font-label-caps text-label-caps transition-all duration-200 ${running ? 'border-red-500/40 text-red-400 hover:bg-red-500/10' : 'border-primary/40 text-primary hover:bg-primary/10'}`}
             >
               <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{running ? 'stop' : 'play_arrow'}</span>

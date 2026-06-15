@@ -30,7 +30,7 @@ const MOLECULE_SVGS = {
   )
 }
 
-export default function MoleculeViewer({ smiles, isValid }) {
+export default function MoleculeViewer({ smiles, svgContent, isValid }) {
   return (
     <div className="relative w-full aspect-square max-w-xs mx-auto rounded-xl border border-outline-variant bg-surface-container-lowest flex items-center justify-center overflow-hidden">
       {/* Grid background */}
@@ -48,8 +48,12 @@ export default function MoleculeViewer({ smiles, isValid }) {
           <span className="font-code-sm text-code-sm">Enter a valid SMILES</span>
         </div>
       ) : (
-        <div className="w-full h-full p-4 z-10">
-          {MOLECULE_SVGS.default}
+        <div className="w-full h-full p-4 z-10 flex items-center justify-center">
+          {svgContent ? (
+            <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: svgContent }} />
+          ) : (
+            MOLECULE_SVGS.default
+          )}
           <div className="absolute bottom-3 left-3 right-3 bg-surface-container/80 rounded-lg px-3 py-1.5 border border-outline-variant/40">
             <p className="font-code-sm text-code-sm text-primary truncate">{smiles}</p>
           </div>
