@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// The base URL is handled by the Vite proxy, so we can use relative paths
+// The base URL is dynamic in production (Vercel) and blank in local development to use the Vite proxy
 const API = axios.create({
-  baseURL: '',
+  baseURL: import.meta.env.VITE_API_URL || '',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -58,7 +58,8 @@ export const apiClient = {
    * Download batch predictions results URL.
    */
   getBatchJobDownloadUrl(jobId) {
-    return `/api/predict/batch/${jobId}/download`;
+    const baseURL = import.meta.env.VITE_API_URL || '';
+    return `${baseURL}/api/predict/batch/${jobId}/download`;
   },
 
   // ── Training ──────────────────────────────────────────────────────
