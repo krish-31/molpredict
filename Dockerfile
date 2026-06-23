@@ -1,10 +1,15 @@
 FROM python:3.10-slim
 
-# Install system build dependencies
+# Install system build dependencies and graphics libraries for RDKit
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     git \
+    libxrender1 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
