@@ -6,6 +6,10 @@ from sqlalchemy.orm import sessionmaker
 # Default to SQLite for simple setup and MVP development
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./graphmol.db")
 
+# SQLAlchemy requires postgresql:// instead of postgres://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 # SQLite needs check_same_thread=False for multi-threaded FastAPI access
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
